@@ -27,6 +27,18 @@ class PhoenixNodeAgent(
     // fills with 4.5, just reflecting a different hardware class's profile).
     private val energyCostEstimate = 6.0
 
+    // Protocol features announced to Phoenix Core at registration.
+    //
+    // "attempt-id": this agent echoes the opaque attemptId Core sends with each
+    // task, verbatim, on /tasks/started and /results. Core uses that to reject
+    // a late or duplicate report from an earlier attempt of the same task.
+    // Without it Core registers the node as LEGACY (unfenced).
+    //
+    // Only announce what this class really implements: Core starts sending
+    // attemptId/attemptNumber to this node, and *requires* the echo (a report
+    // without it is rejected), as soon as the feature is announced.
+    private val protocolFeatures = listOf("attempt-id")
+
     // RTT measured from the previous heartbeat response and reported
     // in the following heartbeat, matching the Linux agent semantics.
     private var lastHeartbeatRttMs = 0.0
@@ -44,6 +56,7 @@ class PhoenixNodeAgent(
                     .put("memoryMb", telemetry.totalRamMb)
                     .put("adapterType", "android")
                     .put("capabilities", org.json.JSONArray())
+                    .put("protocolFeatures", org.json.JSONArray(protocolFeatures))
                 http.postJson("$coreUrl/register", payload.toString())
                 onLog("Registered with Phoenix.")
                 onConnected()
@@ -99,7 +112,34 @@ class PhoenixNodeAgent(
                 throw IllegalStateException("Task response missing task id: $body")
             }
             val samples = task.optLong("samples", 2_000_000)
-            onLog("Received task $taskId, executing Monte-Carlo (samples=$samples)...")
+
+            // Attempt identity. Present only when Core treats this node as
+            // fenced; null for an older Core that sends none. It is echoed back
+            // unchanged and never interpreted. attemptNumber is for logs only.
+            // (opt + "as? String" rather than optString: on Android a JSON null
+            // would come back as the text "null".)
+            val attemptId = task.opt("attemptId") as? String
+            val attemptNumber = task.optLong("attemptNumber", -1)
+
+            // The text up to the first comma must stay "Received task <id>":
+            // MainActivity parses the task id out of this line.
+            onLog(
+                "Received task $taskId, executing Monte-Carlo (samples=$samples" +
+                    (if (attemptId != null)
+                        ", attempt $attemptNumber, id ${shortId(attemptId)}"
+                    else "") +
+                ")..."
+            )
+
+            // Optional "execution began" signal. Best effort: Core works
+            // without it, so a failure here must never abort the task.
+            try {
+                val started = JSONObject().put("taskId", taskId)
+                if (attemptId != null) started.put("attemptId", attemptId)
+                http.postJson("$coreUrl/tasks/started", started.toString())
+            } catch (e: Exception) {
+                onLog("Start notification failed (continuing): ${e.message}")
+            }
 
             val result = executor.execute(samples)
             val resultBody = JSONObject()
@@ -107,6 +147,7 @@ class PhoenixNodeAgent(
                 .put("status", "SUCCESS")
                 .put("outputData", result.output)
                 .put("executionTimeMs", result.executionTimeMs)
+            if (attemptId != null) resultBody.put("attemptId", attemptId)
             http.postJson("$coreUrl/results", resultBody.toString())
             onLog("Task $taskId done: ${result.output} (${result.executionTimeMs}ms)")
         } catch (e: Exception) {
@@ -115,4 +156,7 @@ class PhoenixNodeAgent(
             busy.set(false)
         }
     }
+
+    /** First 8 characters, for log lines only. */
+    private fun shortId(id: String) = if (id.length <= 8) id else id.substring(0, 8)
 }
