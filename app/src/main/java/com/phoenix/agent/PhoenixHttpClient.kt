@@ -1,32 +1,60 @@
 package com.phoenix.agent
 
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 
-class PhoenixHttpClient {
-    fun postJson(endpoint: String, body: String): String = request(endpoint, "POST", body)
-    fun get(endpoint: String): Pair<Int, String> {
-        val conn = URL(endpoint).openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"; conn.connectTimeout = 5000; conn.readTimeout = 5000
-        return try {
-            val code = conn.responseCode
-            val text = if (code == 200) conn.inputStream.bufferedReader().use(BufferedReader::readText) else ""
-            code to text
-        } finally { conn.disconnect() }
-    }
-    private fun request(endpoint: String, method: String, body: String): String {
-        val conn = URL(endpoint).openConnection() as HttpURLConnection
+/** A non-2xx response from Phoenix Core. */
+class HttpStatusException(val code: Int, val body: String) : IOException("HTTP $code: $body")
+
+/**
+ * Minimal blocking JSON-over-HTTP client for the Phoenix node-agent protocol.
+ *
+ * Every call opens a fresh connection and always disconnects it.
+ */
+open class PhoenixHttpClient(private val timeoutMs: Int = 5_000) {
+
+    /**
+     * POSTs [body] as JSON and returns the response body.
+     *
+     * @throws HttpStatusException for any non-2xx response
+     */
+    open fun postJson(endpoint: String, body: String): String {
+        val conn = open(endpoint, "POST")
         try {
-            conn.requestMethod = method; conn.connectTimeout = 5000; conn.readTimeout = 5000
-            conn.setRequestProperty("Content-Type", "application/json"); conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+
             val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val response = BufferedReader(InputStreamReader(stream)).use { it.readText() }
-            if (code !in 200..299) throw RuntimeException("HTTP $code: $response")
-            return response
-        } finally { conn.disconnect() }
+            if (code !in 200..299) {
+                throw HttpStatusException(code, read(conn.errorStream))
+            }
+            return read(conn.inputStream)
+        } finally {
+            conn.disconnect()
+        }
     }
+
+    /** GETs [endpoint]; the body is read only for 200, otherwise it is empty. */
+    open fun get(endpoint: String): Pair<Int, String> {
+        val conn = open(endpoint, "GET")
+        try {
+            val code = conn.responseCode
+            return code to if (code == 200) read(conn.inputStream) else ""
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun open(endpoint: String, method: String): HttpURLConnection =
+        (URI.create(endpoint).toURL().openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = timeoutMs
+            readTimeout = timeoutMs
+        }
+
+    private fun read(stream: InputStream?): String =
+        stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
 }

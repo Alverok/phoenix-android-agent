@@ -1,505 +1,220 @@
 package com.phoenix.agent
 
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
-import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
+/** Single-screen UI for the Phoenix node agent. */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var statusText: TextView
+    private companion object {
+        const val PREF_CORE_URL = "core_url"
+        const val MAX_EVENT_LINES = 30
 
+        val COLOR_ONLINE = Color.rgb(106, 233, 165)
+        val COLOR_CONNECTING = Color.rgb(255, 210, 105)
+        val COLOR_DEGRADED = Color.rgb(255, 195, 92)
+        val COLOR_ERROR = Color.rgb(255, 115, 115)
+        val COLOR_OFFLINE = Color.rgb(150, 153, 170)
+    }
+
+    private lateinit var statusText: TextView
     private lateinit var deviceNameText: TextView
     private lateinit var deviceInfoText: TextView
     private lateinit var deviceIdText: TextView
-
     private lateinit var cardCores: TextView
     private lateinit var cardRam: TextView
-
     private lateinit var coreUrlInput: EditText
     private lateinit var connectButton: Button
-
     private lateinit var taskStateText: TextView
     private lateinit var taskDetailText: TextView
-
     private lateinit var logText: TextView
 
     private lateinit var agent: PhoenixNodeAgent
 
-    private val eventLines =
-        ArrayDeque<String>()
+    private val eventLines = ArrayDeque<String>()
 
-    override fun onCreate(
-        savedInstanceState: Bundle?
-    ) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        setContentView(
-            R.layout.activity_main
-        )
-
+        setContentView(R.layout.activity_main)
         bindViews()
 
-        val telemetry =
-            DeviceTelemetry(this)
+        val telemetry = DeviceTelemetry(this)
+        val identity = DeviceIdentity(this)
 
-        val identity =
-            DeviceIdentity(this)
+        agent = PhoenixNodeAgent(identity, telemetry, PhoenixHttpClient()) { message ->
+            runOnUiThread { handleAgentMessage(message) }
+        }
 
-        agent =
-            PhoenixNodeAgent(
-                identity = identity,
-                telemetry = telemetry,
-                http = PhoenixHttpClient()
-            ) { message ->
-                runOnUiThread {
-                    handleAgentMessage(message)
-                }
-            }
-
-        renderDevice(
-            identity,
-            telemetry
-        )
-
+        renderDevice(identity, telemetry)
         setDisconnectedState()
 
         connectButton.setOnClickListener {
-
             if (agent.running) {
-
                 agent.disconnect()
-
                 setDisconnectedState()
-
             } else {
-
                 connectToPhoenix()
             }
         }
     }
 
-    private fun bindViews() {
-
-        statusText =
-            findViewById(R.id.statusText)
-
-        deviceNameText =
-            findViewById(R.id.deviceNameText)
-
-        deviceInfoText =
-            findViewById(R.id.deviceInfoText)
-
-        deviceIdText =
-            findViewById(R.id.deviceIdText)
-
-        cardCores =
-            findViewById(R.id.cardCores)
-
-        cardRam =
-            findViewById(R.id.cardRam)
-
-        coreUrlInput =
-            findViewById(R.id.coreUrlInput)
-
-        connectButton =
-            findViewById(R.id.connectButton)
-
-        taskStateText =
-            findViewById(R.id.taskStateText)
-
-        taskDetailText =
-            findViewById(R.id.taskDetailText)
-
-        logText =
-            findViewById(R.id.logText)
+    override fun onDestroy() {
+        if (::agent.isInitialized) {
+            agent.disconnect()
+        }
+        super.onDestroy()
     }
 
-    private fun renderDevice(
-        identity: DeviceIdentity,
-        telemetry: DeviceTelemetry
-    ) {
+    private fun bindViews() {
+        statusText = findViewById(R.id.statusText)
+        deviceNameText = findViewById(R.id.deviceNameText)
+        deviceInfoText = findViewById(R.id.deviceInfoText)
+        deviceIdText = findViewById(R.id.deviceIdText)
+        cardCores = findViewById(R.id.cardCores)
+        cardRam = findViewById(R.id.cardRam)
+        coreUrlInput = findViewById(R.id.coreUrlInput)
+        connectButton = findViewById(R.id.connectButton)
+        taskStateText = findViewById(R.id.taskStateText)
+        taskDetailText = findViewById(R.id.taskDetailText)
+        logText = findViewById(R.id.logText)
+    }
 
-        deviceNameText.text =
-            telemetry.displayName
-
+    private fun renderDevice(identity: DeviceIdentity, telemetry: DeviceTelemetry) {
+        deviceNameText.text = telemetry.displayName
         deviceInfoText.text =
-            "Android ${android.os.Build.VERSION.RELEASE}  •  " +
-                    "API ${android.os.Build.VERSION.SDK_INT}\n" +
-                    "${telemetry.architecture}  •  " +
-                    "${telemetry.cpuCores} CPU cores"
-
-        deviceIdText.text =
-            "Node identity\n${identity.deviceId}"
-
-        cardCores.text =
-            telemetry.cpuCores.toString()
-
-        cardRam.text =
-            "${telemetry.totalRamMb} MB"
-
-        coreUrlInput.setText(
-            getPreferences(
-                MODE_PRIVATE
-            ).getString(
-                "core_url",
-                ""
-            ) ?: ""
-        )
+            "Android ${Build.VERSION.RELEASE}  •  API ${Build.VERSION.SDK_INT}\n" +
+                "${telemetry.architecture}  •  ${telemetry.cpuCores} CPU cores"
+        deviceIdText.text = "Node identity\n${identity.deviceId}"
+        cardCores.text = telemetry.cpuCores.toString()
+        cardRam.text = "${telemetry.totalRamMb} MB"
+        coreUrlInput.setText(getPreferences(MODE_PRIVATE).getString(PREF_CORE_URL, "") ?: "")
     }
 
     private fun connectToPhoenix() {
-
-        val url =
-            coreUrlInput.text
-                .toString()
-                .trim()
-                .removeSuffix("/")
+        val url = coreUrlInput.text.toString().trim().removeSuffix("/")
 
         if (url.isBlank()) {
-
-            appendEvent(
-                "Enter a Phoenix Core address first."
-            )
-
-            taskStateText.text =
-                "CORE ADDRESS REQUIRED"
-
-            taskDetailText.text =
-                "Example: http://192.168.1.10:8080"
-
+            appendEvent("Enter a Phoenix Core address first.")
+            showTask("CORE ADDRESS REQUIRED", "Example: http://192.168.1.10:8080")
             return
         }
 
-        getPreferences(
-            MODE_PRIVATE
-        )
-            .edit()
-            .putString(
-                "core_url",
-                url
-            )
-            .apply()
+        getPreferences(MODE_PRIVATE).edit().putString(PREF_CORE_URL, url).apply()
 
         setConnectingState()
-
-        taskStateText.text =
-            "CONNECTING"
-
-        taskDetailText.text =
-            "Registering this device with Phoenix Core..."
-
-        appendEvent(
-            "Connecting to $url"
-        )
+        showTask("CONNECTING", "Registering this device with Phoenix Core...")
+        appendEvent("Connecting to $url")
 
         agent.connect(
             coreUrl = url,
-
-            onConnected = {
-
-                runOnUiThread {
-                    setConnectedState()
-
-                    taskStateText.text =
-                        "READY FOR TASKS"
-
-                    taskDetailText.text =
-                        "Waiting for Phoenix Core to dispatch work."
-
-                    appendEvent(
-                        "Registered with Phoenix Core."
-                    )
-                }
-            },
-
+            // The agent logs "Registered with Phoenix.", which updates the UI.
+            onConnected = {},
             onFailed = { error ->
-
                 runOnUiThread {
-
                     setFailedState()
-
-                    taskStateText.text =
-                        "CONNECTION FAILED"
-
-                    taskDetailText.text =
-                        error
-
-                    appendEvent(
-                        error
-                    )
+                    showTask("CONNECTION FAILED", error)
+                    appendEvent(error)
                 }
             }
         )
     }
 
-    private fun handleAgentMessage(
-        message: String
-    ) {
-
+    private fun handleAgentMessage(message: String) {
         appendEvent(message)
 
         when {
-
-            message.startsWith(
-                "Registered with Phoenix."
-            ) -> {
-
+            message.startsWith("Registered with Phoenix.") -> {
                 setConnectedState()
-
-                taskStateText.text =
-                    "READY FOR TASKS"
-
-                taskDetailText.text =
-                    "Phoenix Core can dispatch work to this node."
+                showTask("READY FOR TASKS", "Phoenix Core can dispatch work to this node.")
             }
 
-            message.startsWith(
-                "Heartbeat sent:"
-            ) -> {
-
+            message.startsWith("Heartbeat sent:") -> {
                 if (agent.running) {
                     setConnectedState()
                 }
             }
 
-            message.startsWith(
-                "Received task "
-            ) -> {
-
-                val taskId =
-                    extractTaskIdFromReceivedMessage(
-                        message
-                    )
-
+            message.startsWith("Received task ") -> {
+                val taskId = message.removePrefix("Received task ").substringBefore(",").trim()
                 setConnectedState()
-
-                taskStateText.text =
-                    "EXECUTING"
-
-                taskDetailText.text =
-                    if (taskId != null) {
-                        "$taskId  •  Monte-Carlo workload"
-                    } else {
-                        "Phoenix task execution in progress."
-                    }
+                showTask(
+                    "EXECUTING",
+                    if (taskId.isNotBlank()) "$taskId  •  Monte-Carlo workload"
+                    else "Phoenix task execution in progress."
+                )
             }
 
-            message.startsWith(
-                "Task "
-            ) &&
-                    message.contains(
-                        " done:"
-                    ) -> {
-
+            message.startsWith("Task ") && message.contains(" done:") -> {
                 setConnectedState()
-
-                taskStateText.text =
-                    "TASK COMPLETE"
-
-                taskDetailText.text =
-                    "Execution completed successfully. Ready for more work."
+                showTask("TASK COMPLETE", "Execution completed successfully. Ready for more work.")
             }
 
-            message.startsWith(
-                "Poll failed:"
-            ) -> {
-
-                taskStateText.text =
-                    "TASK CHANNEL WARNING"
-
-                taskDetailText.text =
-                    message.removePrefix(
-                        "Poll failed:"
-                    ).trim()
+            message.startsWith("Task ") && message.contains(" failed:") -> {
+                showTask("TASK FAILED", message.substringAfter(" failed:").trim())
             }
 
-            message.startsWith(
-                "Heartbeat failed:"
-            ) -> {
+            message.startsWith("Poll failed:") -> {
+                showTask("TASK CHANNEL WARNING", message.removePrefix("Poll failed:").trim())
+            }
 
-                taskDetailText.text =
-                    "Heartbeat could not reach Phoenix Core."
-
+            message.startsWith("Heartbeat failed:") -> {
+                taskDetailText.text = "Heartbeat could not reach Phoenix Core."
                 if (agent.running) {
                     setWarningState()
                 }
             }
 
-            message.startsWith(
-                "Agent stopped."
-            ) -> {
-
+            message.startsWith("Agent stopped.") -> {
                 setDisconnectedState()
-
-                taskStateText.text =
-                    "READY"
-
-                taskDetailText.text =
-                    "Connect to Phoenix Core to rejoin the mesh."
+                showTask("READY", "Connect to Phoenix Core to rejoin the mesh.")
             }
         }
     }
 
-    private fun extractTaskIdFromReceivedMessage(
-        message: String
-    ): String? {
-
-        val prefix =
-            "Received task "
-
-        if (!message.startsWith(prefix)) {
-            return null
-        }
-
-        return message
-            .removePrefix(prefix)
-            .substringBefore(",")
-            .trim()
-            .takeIf {
-                it.isNotBlank()
-            }
+    private fun showTask(state: String, detail: String) {
+        taskStateText.text = state
+        taskDetailText.text = detail
     }
 
-    private fun setConnectingState() {
-
-        statusText.text =
-            "CONNECTING"
-
-        statusText.setTextColor(
-            Color.rgb(
-                255,
-                210,
-                105
-            )
-        )
-
-        connectButton.text =
-            "CONNECTING…"
-
-        connectButton.isEnabled =
-            false
+    private fun setStatus(label: String, color: Int, button: String, buttonEnabled: Boolean) {
+        statusText.text = label
+        statusText.setTextColor(color)
+        connectButton.text = button
+        connectButton.isEnabled = buttonEnabled
     }
 
-    private fun setConnectedState() {
+    private fun setConnectingState() =
+        setStatus("CONNECTING", COLOR_CONNECTING, "CONNECTING…", buttonEnabled = false)
 
-        statusText.text =
-            "● ONLINE"
+    private fun setConnectedState() =
+        setStatus("● ONLINE", COLOR_ONLINE, "DISCONNECT", buttonEnabled = true)
 
-        statusText.setTextColor(
-            Color.rgb(
-                106,
-                233,
-                165
-            )
-        )
+    private fun setWarningState() =
+        setStatus("● DEGRADED", COLOR_DEGRADED, "DISCONNECT", buttonEnabled = true)
 
-        connectButton.text =
-            "DISCONNECT"
-
-        connectButton.isEnabled =
-            true
-    }
-
-    private fun setWarningState() {
-
-        statusText.text =
-            "● DEGRADED"
-
-        statusText.setTextColor(
-            Color.rgb(
-                255,
-                195,
-                92
-            )
-
-        )
-
-        connectButton.text =
-            "DISCONNECT"
-
-        connectButton.isEnabled =
-            true
-    }
-
-    private fun setFailedState() {
-
-        statusText.text =
-            "● ERROR"
-
-        statusText.setTextColor(
-            Color.rgb(
-                255,
-                115,
-                115
-            )
-        )
-
-        connectButton.text =
-            "CONNECT TO PHOENIX"
-
-        connectButton.isEnabled =
-            true
-    }
+    private fun setFailedState() =
+        setStatus("● ERROR", COLOR_ERROR, "CONNECT TO PHOENIX", buttonEnabled = true)
 
     private fun setDisconnectedState() {
-
-        statusText.text =
-            "● OFFLINE"
-
-        statusText.setTextColor(
-            Color.rgb(
-                150,
-                153,
-                170
-            )
-        )
-
-        connectButton.text =
-            "CONNECT TO PHOENIX"
-
-        connectButton.isEnabled =
-            true
-
-        taskStateText.text =
-            "NOT CONNECTED"
-
-        taskDetailText.text =
-            "Connect to Phoenix Core to join the edge mesh."
+        setStatus("● OFFLINE", COLOR_OFFLINE, "CONNECT TO PHOENIX", buttonEnabled = true)
+        showTask("NOT CONNECTED", "Connect to Phoenix Core to join the edge mesh.")
     }
 
-    private fun appendEvent(
-        message: String
-    ) {
-
+    private fun appendEvent(message: String) {
         if (message.isBlank()) {
             return
         }
 
-        eventLines.addLast(
-            message
-        )
-
-        while (eventLines.size > 30) {
+        eventLines.addLast(message)
+        while (eventLines.size > MAX_EVENT_LINES) {
             eventLines.removeFirst()
         }
 
-        logText.text =
-            eventLines
-                .joinToString(
-                    separator = "\n"
-                )
-    }
-
-    override fun onDestroy() {
-
-        if (::agent.isInitialized) {
-            agent.disconnect()
-        }
-
-        super.onDestroy()
+        logText.text = eventLines.joinToString(separator = "\n")
     }
 }
