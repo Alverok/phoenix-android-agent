@@ -21,7 +21,7 @@ class PhoenixNodeAgent(
     private val telemetry: NodeTelemetry,
     private val http: PhoenixHttpClient,
     private val onLog: (String) -> Unit
-) {
+) : NodeAgent {
 
     private companion object {
         const val REGISTERED = "Registered with Phoenix."
@@ -31,13 +31,6 @@ class PhoenixNodeAgent(
 
         /** Error code Core returns from /results for a result it no longer expects. */
         const val UNKNOWN_TASK = "unknown_task"
-
-        /**
-         * Relative energy cost per task. A heuristic, not a measurement:
-         * battery-powered mobile hardware is weighted above a mains-powered
-         * Linux machine (4.5) until per-device profiling exists.
-         */
-        const val ENERGY_COST_ESTIMATE = 6.0
 
         /**
          * Protocol features announced at registration. "attempt-id" means
@@ -59,7 +52,7 @@ class PhoenixNodeAgent(
     private var scheduler: ScheduledExecutorService = newScheduler()
 
     @Volatile
-    var running = false
+    override var running = false
         private set
 
     /** True while a task is executing; reported to Core as the load signal. */
@@ -117,7 +110,7 @@ class PhoenixNodeAgent(
         }.start()
     }
 
-    fun disconnect() {
+    override fun disconnect() {
         synchronized(lifecycle) {
             generation++
             running = false
@@ -209,7 +202,7 @@ class PhoenixNodeAgent(
                 .put("activeTasks", if (busy.get()) 1 else 0)
                 .put("queueLength", 0)
                 .put("networkLatencyMs", lastHeartbeatRttMs)
-                .put("energyCostEstimate", ENERGY_COST_ESTIMATE)
+                .put("energyCostEstimate", ANDROID_ENERGY_COST_ESTIMATE)
 
             val start = System.nanoTime()
             http.postJson("${session.coreUrl}/heartbeat", body.toString())

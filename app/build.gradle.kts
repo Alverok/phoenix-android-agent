@@ -37,6 +37,7 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
+    implementation(libs.paho.mqttv3)
     testImplementation(libs.junit)
     testImplementation(libs.json)
     androidTestImplementation(libs.androidx.espresso.core)

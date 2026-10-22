@@ -1,16 +1,24 @@
 package com.phoenix.agent
 
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ThreadLocalRandom
 
 /** Estimates pi by Monte-Carlo sampling of the unit square. */
 class MonteCarloExecutor {
 
+    private companion object {
+        /** [execute] asks whether to stop every 65,536 samples (a few ms). */
+        const val STOP_CHECK_MASK = 0xFFFFL
+    }
+
     data class Result(val output: String, val executionTimeMs: Long)
 
     /**
+     * @param shouldStop polled while sampling; returning true abandons the run
      * @throws IllegalArgumentException if [samples] is not positive
+     * @throws CancellationException if [shouldStop] returned true
      */
-    fun execute(samples: Long): Result {
+    fun execute(samples: Long, shouldStop: () -> Boolean = { false }): Result {
         require(samples > 0) { "samples must be positive, was $samples" }
 
         val random = ThreadLocalRandom.current()
@@ -19,6 +27,9 @@ class MonteCarloExecutor {
         var i = 0L
 
         while (i < samples) {
+            if ((i and STOP_CHECK_MASK) == 0L && shouldStop()) {
+                throw CancellationException("stopped after $i of $samples samples")
+            }
             val x = random.nextDouble()
             val y = random.nextDouble()
             if (x * x + y * y <= 1.0) {
