@@ -1,19 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
+   Backup and device-transfer rules for Android 12 (API 31) and higher.
    See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+
+   The broker password and the enrollment token (AgentSettings.SECRETS_FILE)
+   are never backed up or transferred. Everything else follows the defaults.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="phoenix_agent_secrets.xml" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="phoenix_agent_secrets.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>

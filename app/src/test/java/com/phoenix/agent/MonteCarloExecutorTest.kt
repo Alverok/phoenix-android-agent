@@ -3,6 +3,7 @@ package com.phoenix.agent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CancellationException
 
 class MonteCarloExecutorTest {
 
@@ -30,5 +31,17 @@ class MonteCarloExecutorTest {
     @Test(expected = IllegalArgumentException::class)
     fun rejectsNegativeSamples() {
         executor.execute(-5)
+    }
+
+    @Test(expected = CancellationException::class)
+    fun aRunStopsWhenAskedTo() {
+        executor.execute(1_000_000_000L) { true }
+    }
+
+    @Test
+    fun aRunThatIsNotAskedToStopCompletes() {
+        var asked = 0
+        executor.execute(200_000) { asked++; false }
+        assertTrue(asked in 1..10)
     }
 }

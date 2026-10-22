@@ -13,3 +13,10 @@ interface NodeTelemetry {
     val totalRamMb: Long
     val availableRamMb: Long
 }
+
+/**
+ * Relative energy cost per task reported in heartbeats. A heuristic, not a
+ * measurement: battery-powered mobile hardware is weighted above a
+ * mains-powered Linux machine (4.5) until per-device profiling exists.
+ */
+const val ANDROID_ENERGY_COST_ESTIMATE = 6.0
